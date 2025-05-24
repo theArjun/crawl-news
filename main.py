@@ -4,6 +4,8 @@ from crawl4ai import (
     PruningContentFilter,
     DefaultMarkdownGenerator,
     CrawlerRunConfig,
+    LLMExtractionStrategy,
+    LLMConfig,
 )
 from urllib.parse import urlparse, urljoin, parse_qs
 from pathlib import Path
@@ -11,22 +13,25 @@ import re
 from collections import deque
 import logging
 import hashlib
+from dotenv import load_dotenv
+from pydantic import BaseModel, Field
 
-# --- Configuration ---
-# Initial URL to start crawling from
 INITIAL_URL = "https://merolagani.com/NewsDetail.aspx?newsID=114689"
-# Directory to store the crawled data
 DATA_STORE_DIR = Path(__file__).parent / "data"
-# Create the base data store directory if it doesn't exist
 DATA_STORE_DIR.mkdir(parents=True, exist_ok=True)
 
-# Setup logging
-# Change level to logging.DEBUG for more verbose output
+load_dotenv()
+
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-# --- Helper Functions ---
+
+class NewsData(BaseModel):
+    title: str = Field(description="The title of the news")
+    content: str = Field(description="The content of the news")
+    url: str = Field(description="The URL of the news")
+    date: str = Field(description="The date of the news")
 
 
 def get_domain(url: str) -> str:
@@ -163,29 +168,29 @@ async def crawl_and_extract_content(
     # Path for storing data for this specific URL: data/<domain>/<fingerprint>/result.md
     data_storage_path_for_url = base_data_dir / current_domain / url_fingerprint
     data_storage_path_for_url.mkdir(parents=True, exist_ok=True)
-    markdown_file_path = data_storage_path_for_url / "result.md"
+    json_file_path = data_storage_path_for_url / "result.json"
 
-    if markdown_file_path.exists():
+    if json_file_path.exists():
         logging.info(
-            f"Markdown already exists for {url} at {markdown_file_path}, reading from disk."
+            f"JSON file already exists for {url} at {json_file_path}, reading from disk."
         )
         try:
-            return markdown_file_path.read_text(encoding="utf-8")
+            return json_file_path.read_text(encoding="utf-8")
         except Exception as e:
-            logging.error(f"Error reading existing markdown for {url}: {e}")
+            logging.error(f"Error reading existing JSON file for {url}: {e}")
             # Proceed to re-crawl if reading fails
 
     try:
         result = await crawler.arun(url=url, config=config)
         if result.success and result.markdown:
             logging.info(f"Successfully crawled: {url}")
-            with open(markdown_file_path, "w", encoding="utf-8") as f:
-                f.write(result.markdown)
-            logging.info(f"Stored markdown for {url} at {markdown_file_path}")
+            with open(json_file_path, "w", encoding="utf-8") as f:
+                f.write(result.extracted_content)
+            logging.info(f"Stored JSON for {url} at {json_file_path}")
             return result.markdown
         else:
             logging.error(
-                f"Failed to crawl or get markdown for {url}. Error: {result.error if result else 'Unknown error'}"
+                f"Failed to crawl or get JSON for {url}. Error: {result.error if result else 'Unknown error'}"
             )
             return None
     except Exception as e:
@@ -209,12 +214,24 @@ async def main(start_url: str):
         f"Starting crawl with initial URL: {start_url} (Base Domain: {base_domain})"
     )
 
-    # Step 1: Create a pruning filter (same as original)
     prune_filter = PruningContentFilter(min_word_threshold=5)
-    # Step 2: Insert it into a Markdown Generator
     md_generator = DefaultMarkdownGenerator(content_filter=prune_filter)
-    # Step 3: Pass it to CrawlerRunConfig
-    crawler_config = CrawlerRunConfig(markdown_generator=md_generator)
+    llm_config = LLMConfig(
+        provider="gemini/gemini-2.0-flash",
+        max_tokens=1000,
+        top_p=1.0,
+        frequency_penalty=0.0,
+    )
+    crawler_config = CrawlerRunConfig(
+        markdown_generator=md_generator,
+        extraction_strategy=LLMExtractionStrategy(
+            llm_config=llm_config,
+            schema=NewsData.model_json_schema(),
+            extraction_type="schema",
+            extraction_instruction="Extract the news data from the markdown content",
+            verbose=True,
+        ),
+    )
 
     urls_to_visit = deque([start_url])
     visited_urls = set()
