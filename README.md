@@ -145,21 +145,6 @@ graph TD
     style T fill:#f3e5f5
 ```
 
-## Project Structure
-
-```
-crawl-news/
-├── .env                    # Environment variables (API keys)
-├── .gitignore             # Git ignore rules
-├── main.py                # Main crawler application
-├── pyproject.toml         # Project configuration
-├── README.md              # This file
-├── uv.lock               # Dependency lock file
-├── data/                  # Extracted news data
-│   └── merolagani.com/   # Domain-specific storage
-└── .venv/                # Virtual environment
-```
-
 ## Key Components
 
 ### NewsData Model
